@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="local/ai_grader/db" VERSION="20241215" COMMENT="XMLDB file for Moodle local/ai_grader"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
+>
+  <TABLES>
+    <TABLE NAME="local_ai_grader_logs" COMMENT="Stores AI grading logs for comparison">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="attemptid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="The quiz attempt ID"/>
+        <FIELD NAME="questionid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="The question ID"/>
+        <FIELD NAME="ai_mark" TYPE="number" LENGTH="10" NOTNULL="false" SEQUENCE="false" DECIMALS="5" COMMENT="The mark suggested by AI"/>
+        <FIELD NAME="ai_comment" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="The comment suggested by AI"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="attempt_question" UNIQUE="false" FIELDS="attemptid, questionid"/>
+      </INDEXES>
+    </TABLE>
+  </TABLES>
+</XMLDB>
