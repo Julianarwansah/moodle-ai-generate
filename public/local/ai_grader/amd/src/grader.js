@@ -97,7 +97,7 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
                 var colCount = table.find('thead th, thead td').length;
                 if (colCount === 0) colCount = table.find('tr').first().find('th, td').length;
 
-                var rowHtml = '<tr id="ai-log-' + log.id + '" style="background-color: #f0f7ff; border-left: 5px solid #007bff; font-size: 0.9em;">';
+                var rowHtml = '<tr id="ai-log-' + log.id + '" class="ai-grader-row" style="background-color: #f0f7ff; border-left: 5px solid #007bff; font-size: 0.9em;">';
                 rowHtml += '<td>' + stepNum + '</td>';
                 rowHtml += '<td>' + dateStr + '</td>';
 
@@ -120,38 +120,52 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
 
                 rowHtml += '</tr>';
 
-                // Find insertion point: Find the first row with a timestamp later than our log
-                var inserted = false;
                 var tbody = table.find('tbody');
                 if (tbody.length === 0) tbody = table;
 
+                // Smarter insertion: Match this log to a manual grade row
+                var targetRow = null;
+                var potentialRows = [];
+
                 tbody.find('tr').each(function () {
                     var row = $(this);
-                    var cellTimeText = row.find('td:eq(1)').text();
-                    if (cellTimeText) {
-                        // Very rough time comparison or look for "Manually graded" and mark matching
-                        var rowActionText = row.find('td:eq(2)').text();
-                        if (rowActionText.indexOf('Manually graded') !== -1) {
-                            // If this manual grade matches our AI log's mark or is very close in time
-                            // Let's check marks
-                            var markMatch = rowActionText.match(/graded ([\d\.]+)/);
-                            if (markMatch && parseFloat(markMatch[1]) == log.ai_mark) {
-                                row.before(rowHtml);
-                                inserted = true;
-                                return false; // break
-                            }
-
-                            // Or if we don't have a mark match but it's the next manual grade, 
-                            // we can assume it was the suggestion for it
-                            // For now, let's just insert before the NEXT manual grade row regardless of mark if it's the first one we see
-                            row.before(rowHtml);
-                            inserted = true;
-                            return false;
-                        }
+                    var rowActionText = row.find('td:eq(2)').text();
+                    if (rowActionText.indexOf('Manually graded') !== -1) {
+                        potentialRows.push(row);
                     }
                 });
 
-                if (!inserted) {
+                // 1. Try matching by mark exactly
+                for (var i = 0; i < potentialRows.length; i++) {
+                    var row = potentialRows[i];
+                    var rowActionText = row.find('td:eq(2)').text();
+                    var markMatch = rowActionText.match(/graded ([\d\.]+)/);
+                    if (markMatch && parseFloat(markMatch[1]) == log.ai_mark) {
+                        // Check if an AI row is already before this row
+                        if (!row.prev().hasClass('ai-grader-row')) {
+                            targetRow = row;
+                            break;
+                        }
+                    }
+                }
+
+                // 2. Fallback: If no exact mark match, and we have the same number of logs as manual grades, match by order
+                // This is a bit complex for a stateless appendLogRow, so let's try a simpler fallback:
+                // If it's the first log, insert before the first manual grade that doesn't have an AI log yet.
+                if (!targetRow) {
+                    for (var i = 0; i < potentialRows.length; i++) {
+                        var row = potentialRows[i];
+                        if (!row.prev().hasClass('ai-grader-row')) {
+                            targetRow = row;
+                            break;
+                        }
+                    }
+                }
+
+                if (targetRow) {
+                    targetRow.before(rowHtml);
+                } else {
+                    // Final fallback: append to end
                     if (tbody.has('tbody').length) {
                         tbody.append(rowHtml);
                     } else {
