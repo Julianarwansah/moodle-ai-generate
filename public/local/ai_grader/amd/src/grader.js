@@ -4,17 +4,30 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
         return {
             init: function () {
                 console.log('AI Grader V3 loaded');
+
+                // Debug indicator
+                if ($('#ai-grader-debug-info').length === 0) {
+                    $('body').prepend('<div id="ai-grader-debug-info" style="position:fixed; top:0; right:10px; background:rgba(0,0,0,0.8); color:#00ff00; padding:10px; z-index:9999; font-size:12px; border: 1px solid #00ff00; border-radius: 0 0 5px 5px;">AI Grader V3: <span id="ai-debug-status">Initializing...</span></div>');
+                }
+
                 var triggerSelector = '#manualgradingform .fitem_fsubmit .felement';
                 // Wait for the form to be available
-                // Wait for the manual grading form OR the history table to be available
                 if ($(triggerSelector).length) {
                     this.addGradeButton();
                 }
 
                 // Check for history table (Review page)
-                if ($('.history table').length) {
+                var historyExists = $('.history table').length || $('.responsehistoryheader').length || $('.que .content').length;
+                if (historyExists) {
+                    console.log('AI Grader: History detected, initiating injection');
                     this.injectHistory();
                 }
+            },
+
+            updateStatus: function (msg, color) {
+                var el = $('#ai-debug-status');
+                el.text(msg);
+                if (color) el.css('color', color);
             },
 
             injectHistory: function () {
@@ -22,9 +35,12 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
                 var urlParams = new URLSearchParams(window.location.search);
                 var attemptId = urlParams.get('attempt');
 
-                if (!attemptId) return;
+                if (!attemptId) {
+                    this.updateStatus('No Attempt ID in URL', 'orange');
+                    return;
+                }
 
-                console.log('AI Grader: Fetching logs for attempt ' + attemptId);
+                this.updateStatus('Fetching logs for attempt ' + attemptId + '...');
 
                 Ajax.call([{
                     methodname: 'local_ai_grader_get_logs',
@@ -32,82 +48,73 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
                         attemptid: attemptId
                     }
                 }])[0].done(function (logs) {
-                    if (logs.length === 0) return;
+                    if (logs.length === 0) {
+                        that.updateStatus('No logs found for attempt ' + attemptId, 'yellow');
+                        return;
+                    }
 
-                    console.log('AI Grader: Found ' + logs.length + ' logs');
+                    that.updateStatus('Found ' + logs.length + ' logs, matching questions...', '#00ff00');
 
-                    // Group logs by questionid
-                    var logsByQuestion = {};
-                    logs.forEach(function (log) {
-                        if (!logsByQuestion[log.questionid]) {
-                            logsByQuestion[log.questionid] = [];
-                        }
-                        logsByQuestion[log.questionid].push(log);
-                    });
-
-                    // For each question on the page
+                    // Find Usage ID from DOM
+                    var usageId = 0;
                     $('.que').each(function () {
-                        var que = $(this);
-                        var idAttr = que.attr('id'); // e.g., "question-1-1" or similar
-                        // We need to find the correct question ID. 
-                        // Often it's in a hidden input or we can guess from context.
-                        // Better: Moodle usually has a qid in some data attribute.
-
-                        // Let's look for the response history table in this question
-                        var historyTable = que.find('.history table');
-                        if (historyTable.length === 0) return;
-
-                        // Try to find question ID. 
-                        // In review.php, there's often no direct QID in .que, but we can look for it.
-                        // Fallback: check all logs and if they match the slot. 
-                        // But we don't know the slot easily here without parsing the ID.
-
-                        // Actually, we can fetch logs for ALL questions and just match them if we can find the QID.
-                        // Let's find where QID is stored in the DOM.
-                        // Usually: <input type="hidden" name="q123:slot" value="...">
-                        // Or just parse the ID if it's "question-attemptID-slot"
-
-                        // Let's try matching via the content for now or just append all relevant logs if it's a single question page.
-                        // Ideally we find the question ID.
-                        var qid = 0;
-                        // Moodle 4.x: .que class often has data-attribute?
-                        // Let's look at the specific feedback or something.
-
-                        // If we can't find QID, we might just match by looking at the logs attemptid.
-                        // But wait, the logs we fetched are already filtered by attemptId.
-
-                        // Let's assume for now we can find the question ID or just use the first log if it's likely.
-                        // Better approach: filter logs that haven't been injected yet.
-
-                        logs.forEach(function (log) {
-                            // Check if this log belongs to this question
-                            // (This is tricky without knowing which .que is which question ID)
-                            // However, each .que has a .qtext. Maybe we can't match easily.
-
-                            // Let's just append to the FIRST history table for now if there's only one, 
-                            // OR try to match question ID if available.
-
-                            // In Moodle, the question ID is usually not directly visible, 
-                            // but we can find it in the "Edit question" link if available.
-                            var editLink = que.find('.editquestion a').attr('href');
-                            if (editLink) {
-                                var match = editLink.match(/id=(\d+)/);
-                                if (match && match[1] == log.questionid) {
-                                    that.appendLogRow(historyTable, log);
-                                }
-                            } else {
-                                // Fallback: If only one question on page and one log, just append.
-                                if ($('.que').length === 1 && logs.length >= 1) {
-                                    that.appendLogRow(historyTable, log);
-                                } else {
-                                    // Complex case: multiple questions. 
-                                    // For now, let's just match any log that we haven't matched yet? No.
-                                    // Search for question ID in hidden inputs
-                                    // <input type="hidden" name="question123_sequencecheck" ...>
-                                }
+                        var id = $(this).attr('id');
+                        if (id && id.indexOf('question-') === 0) {
+                            var parts = id.split('-');
+                            if (parts.length >= 2) {
+                                usageId = parts[1];
+                                return false; // break
                             }
-                        });
+                        }
                     });
+
+                    if (!usageId) {
+                        console.log('AI Grader: Could not detect usageId, trying fallback');
+                    }
+
+                    var injectedCount = 0;
+                    logs.forEach(function (log) {
+                        var targetElementId = 'question-' + usageId + '-' + log.slot;
+                        var targetQue = $('#' + targetElementId);
+
+                        if (targetQue.length === 0) {
+                            // Try targeting by slot directly if usageId failed
+                            targetQue = $('.que').filter(function () {
+                                var id = $(this).attr('id') || '';
+                                return id.endsWith('-' + log.slot);
+                            });
+
+                            if (targetQue.length === 0 && $('.que').length === 1) {
+                                targetQue = $('.que');
+                            }
+                        }
+
+                        if (targetQue.length) {
+                            // Look for the table. It might not be in a div with class 'history' sometimes.
+                            var historyTable = targetQue.find('table').filter(function () {
+                                var text = $(this).prevAll('h4').text() || $(this).closest('.history').find('h4').text();
+                                return text.toLowerCase().indexOf('history') !== -1 || $(this).closest('.history').length > 0;
+                            });
+
+                            if (historyTable.length === 0) {
+                                // Just find the table in the last part of the question content
+                                historyTable = targetQue.find('.history table, .responsehistoryheader table, .content table').last();
+                            }
+
+                            if (historyTable.length) {
+                                console.log('AI Grader: Injecting log ' + log.id + ' into question slot ' + log.slot);
+                                that.appendLogRow(historyTable, log);
+                                injectedCount++;
+                            }
+                        } else {
+                            console.log('AI Grader: Target question not found for log ' + log.id + ' (Slot: ' + log.slot + ')');
+                        }
+                    });
+
+                    that.updateStatus('Injected ' + injectedCount + ' / ' + logs.length + ' logs', injectedCount > 0 ? '#00ff00' : 'red');
+                }).fail(function (ex) {
+                    that.updateStatus('AJAX Failed', 'red');
+                    console.error('AI Grader: Ajax failed', ex);
                 });
             },
 
@@ -118,20 +125,42 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
                 var date = new Date(log.timecreated * 1000);
                 var dateStr = date.toLocaleString();
 
-                var lastRow = table.find('tbody tr').last();
-                var stepNum = "AI"; // Or parse last step number + 0.5
+                var stepNum = "AI Advice";
 
-                var rowHtml = '<tr id="ai-log-' + log.id + '" class="table-info">';
+                // Find column count to match table header
+                var colCount = table.find('thead th, thead td').length;
+                if (colCount === 0) colCount = table.find('tr').first().find('th, td').length;
+
+                var rowHtml = '<tr id="ai-log-' + log.id + '" style="background-color: #e7f3ff; border-left: 5px solid #007bff;">';
                 rowHtml += '<td>' + stepNum + '</td>';
                 rowHtml += '<td>' + dateStr + '</td>';
-                rowHtml += '<td><strong>AI Suggested Grade: ' + log.ai_mark + '</strong><br/><small>' + log.ai_comment + '</small></td>';
+
+                // Action column
+                var actionContent = '<strong>AI Suggested: ' + log.ai_mark + '</strong><br/>' + log.ai_comment;
+                rowHtml += '<td>' + actionContent + '</td>';
+
+                // State column
                 rowHtml += '<td>AI Log</td>';
-                if (table.find('th').length > 4) {
+
+                // Marks column (if exists)
+                if (colCount > 4) {
                     rowHtml += '<td>' + log.ai_mark + '</td>';
                 }
+
+                // Pad if more columns
+                for (var i = 5; i < colCount; i++) {
+                    rowHtml += '<td></td>';
+                }
+
                 rowHtml += '</tr>';
 
-                table.find('tbody').append(rowHtml);
+                // Append to tbody or last tr
+                var tbody = table.find('tbody');
+                if (tbody.length) {
+                    tbody.append(rowHtml);
+                } else {
+                    table.append(rowHtml);
+                }
             },
 
             addGradeButton: function () {
