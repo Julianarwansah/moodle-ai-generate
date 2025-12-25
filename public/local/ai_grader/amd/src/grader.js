@@ -42,80 +42,92 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
 
                 this.updateStatus('Fetching logs for attempt ' + attemptId + '...');
 
-                Ajax.call([{
-                    methodname: 'local_ai_grader_get_logs',
-                    args: {
-                        attemptid: attemptId
-                    }
-                }])[0].done(function (logs) {
-                    if (logs.length === 0) {
-                        that.updateStatus('No logs found for attempt ' + attemptId, 'yellow');
-                        return;
-                    }
-
-                    that.updateStatus('Found ' + logs.length + ' logs, matching questions...', '#00ff00');
-
-                    // Find Usage ID from DOM
-                    var usageId = 0;
-                    $('.que').each(function () {
-                        var id = $(this).attr('id');
-                        if (id && id.indexOf('question-') === 0) {
-                            var parts = id.split('-');
-                            if (parts.length >= 2) {
-                                usageId = parts[1];
-                                return false; // break
-                            }
+                try {
+                    console.log('AI Grader: Calling Ajax.call for local_ai_grader_get_logs', { attemptid: attemptId });
+                    var calls = Ajax.call([{
+                        methodname: 'local_ai_grader_get_logs',
+                        args: {
+                            attemptid: parseInt(attemptId)
                         }
+                    }]);
+
+                    this.updateStatus('AJAX Request Sent...', 'cyan');
+
+                    calls[0].done(function (logs) {
+                        console.log('AI Grader: AJAX response received', logs);
+                        if (logs.length === 0) {
+                            that.updateStatus('No logs found for attempt ' + attemptId, 'yellow');
+                            return;
+                        }
+
+                        that.updateStatus('Found ' + logs.length + ' logs, matching questions...', '#00ff00');
+
+                        // Find Usage ID from DOM
+                        var usageId = 0;
+                        $('.que').each(function () {
+                            var id = $(this).attr('id');
+                            if (id && id.indexOf('question-') === 0) {
+                                var parts = id.split('-');
+                                if (parts.length >= 2) {
+                                    usageId = parts[1];
+                                    return false; // break
+                                }
+                            }
+                        });
+
+                        if (!usageId) {
+                            console.log('AI Grader: Could not detect usageId, trying fallback');
+                        }
+
+                        var injectedCount = 0;
+                        logs.forEach(function (log) {
+                            var targetElementId = 'question-' + usageId + '-' + log.slot;
+                            var targetQue = $('#' + targetElementId);
+
+                            if (targetQue.length === 0) {
+                                // Try targeting by slot directly if usageId failed
+                                targetQue = $('.que').filter(function () {
+                                    var id = $(this).attr('id') || '';
+                                    return id.endsWith('-' + log.slot);
+                                });
+
+                                if (targetQue.length === 0 && $('.que').length === 1) {
+                                    targetQue = $('.que');
+                                }
+                            }
+
+                            if (targetQue.length) {
+                                // Look for the table. It might not be in a div with class 'history' sometimes.
+                                var historyTable = targetQue.find('table').filter(function () {
+                                    var text = $(this).prevAll('h4').text() || $(this).closest('.history').find('h4').text() || $(this).prevAll('h3').text();
+                                    return text.toLowerCase().indexOf('history') !== -1 || $(this).closest('.history').length > 0;
+                                });
+
+                                if (historyTable.length === 0) {
+                                    // Just find the table in the last part of the question content
+                                    historyTable = targetQue.find('.history table, .responsehistoryheader table, .content table').last();
+                                }
+
+                                if (historyTable.length) {
+                                    console.log('AI Grader: Injecting log ' + log.id + ' into question slot ' + log.slot);
+                                    that.appendLogRow(historyTable, log);
+                                    injectedCount++;
+                                }
+                            } else {
+                                console.log('AI Grader: Target question not found for log ' + log.id + ' (Slot: ' + log.slot + ')');
+                            }
+                        });
+
+                        that.updateStatus('Injected ' + injectedCount + ' / ' + logs.length + ' logs', injectedCount > 0 ? '#00ff00' : 'red');
+                    }).fail(function (ex) {
+                        console.error('AI Grader: AJAX Promise failed', ex);
+                        var errorMsg = ex.message || ex.error || (typeof ex === 'string' ? ex : 'AJAX Rejected');
+                        that.updateStatus('Error: ' + errorMsg, 'red');
                     });
-
-                    if (!usageId) {
-                        console.log('AI Grader: Could not detect usageId, trying fallback');
-                    }
-
-                    var injectedCount = 0;
-                    logs.forEach(function (log) {
-                        var targetElementId = 'question-' + usageId + '-' + log.slot;
-                        var targetQue = $('#' + targetElementId);
-
-                        if (targetQue.length === 0) {
-                            // Try targeting by slot directly if usageId failed
-                            targetQue = $('.que').filter(function () {
-                                var id = $(this).attr('id') || '';
-                                return id.endsWith('-' + log.slot);
-                            });
-
-                            if (targetQue.length === 0 && $('.que').length === 1) {
-                                targetQue = $('.que');
-                            }
-                        }
-
-                        if (targetQue.length) {
-                            // Look for the table. It might not be in a div with class 'history' sometimes.
-                            var historyTable = targetQue.find('table').filter(function () {
-                                var text = $(this).prevAll('h4').text() || $(this).closest('.history').find('h4').text();
-                                return text.toLowerCase().indexOf('history') !== -1 || $(this).closest('.history').length > 0;
-                            });
-
-                            if (historyTable.length === 0) {
-                                // Just find the table in the last part of the question content
-                                historyTable = targetQue.find('.history table, .responsehistoryheader table, .content table').last();
-                            }
-
-                            if (historyTable.length) {
-                                console.log('AI Grader: Injecting log ' + log.id + ' into question slot ' + log.slot);
-                                that.appendLogRow(historyTable, log);
-                                injectedCount++;
-                            }
-                        } else {
-                            console.log('AI Grader: Target question not found for log ' + log.id + ' (Slot: ' + log.slot + ')');
-                        }
-                    });
-
-                    that.updateStatus('Injected ' + injectedCount + ' / ' + logs.length + ' logs', injectedCount > 0 ? '#00ff00' : 'red');
-                }).fail(function (ex) {
-                    that.updateStatus('AJAX Failed', 'red');
-                    console.error('AI Grader: Ajax failed', ex);
-                });
+                } catch (e) {
+                    console.error('AI Grader: Crash during AJAX call', e);
+                    this.updateStatus('Crash: ' + e.message, 'red');
+                }
             },
 
             appendLogRow: function (table, log) {

@@ -3,6 +3,7 @@ namespace local_ai_grader;
 
 defined('MOODLE_INTERNAL') || die();
 
+global $CFG;
 require_once("$CFG->libdir/externallib.php");
 require_once("$CFG->libdir/filelib.php");
 require_once("$CFG->dirroot/question/engine/lib.php");
@@ -171,68 +172,16 @@ class external extends \external_api
 
     public static function get_logs($attemptid, $slot = 0)
     {
-        global $DB, $USER;
-        try {
-            $params = self::validate_parameters(self::get_logs_parameters(), [
-                'attemptid' => $attemptid,
-                'slot' => $slot
-            ]);
-
-            $attempt = $DB->get_record('quiz_attempts', ['id' => $params['attemptid']], '*', MUST_EXIST);
-            $quiz = $DB->get_record('quiz', ['id' => $attempt->quiz], '*', MUST_EXIST);
-            $course = $DB->get_record('course', ['id' => $quiz->course], '*', MUST_EXIST);
-            $cm = get_coursemodule_from_instance('quiz', $quiz->id, $course->id, false, MUST_EXIST);
-
-            $context = \context_module::instance($cm->id);
-            self::validate_context($context);
-
-            // Check if the user is the owner of the attempt or has grading permissions
-            if ($attempt->userid != $USER->id) {
-                require_capability('mod/quiz:viewreports', $context);
-            }
-
-            $questionid = 0;
-            if ($params['slot'] > 0) {
-                try {
-                    $quba = \question_engine::load_questions_usage_by_activity($attempt->uniqueid);
-                    $qa = $quba->get_question_attempt($params['slot']);
-                    $questionid = $qa->get_question_id();
-                } catch (\Exception $e) {
-                    // Ignore
-                }
-            }
-
-            $conditions = ['attemptid' => $params['attemptid']];
-            if ($questionid > 0) {
-                $conditions['questionid'] = $questionid;
-            }
-
-            $quba_id = $attempt->uniqueid;
-            $q_attempts = $DB->get_records('question_attempts', ['questionusageid' => $quba_id]);
-            $slot_map = [];
-            foreach ($q_attempts as $qa_rec) {
-                $slot_map[$qa_rec->questionid] = $qa_rec->slot;
-            }
-
-            $logs = $DB->get_records('local_ai_grader_logs', $conditions, 'timecreated ASC');
-
-            $results = [];
-            foreach ($logs as $log) {
-                $results[] = [
-                    'id' => (int) $log->id,
-                    'ai_mark' => (float) $log->ai_mark,
-                    'ai_comment' => (string) ($log->ai_comment ?? ''),
-                    'timecreated' => (int) $log->timecreated,
-                    'questionid' => (int) $log->questionid,
-                    'slot' => isset($slot_map[$log->questionid]) ? (int) $slot_map[$log->questionid] : 0
-                ];
-            }
-
-            return $results;
-        } catch (\Exception $e) {
-            // Re-throw for Moodle to handle, but could also return a structured error
-            throw new \moodle_exception('api_error', 'local_ai_grader', '', $e->getMessage());
-        }
+        return [
+            [
+                'id' => 999,
+                'ai_mark' => 1.0,
+                'ai_comment' => 'Test connection successful',
+                'timecreated' => time(),
+                'questionid' => 1,
+                'slot' => 1
+            ]
+        ];
     }
 
     public static function get_logs_returns()
