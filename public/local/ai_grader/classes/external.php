@@ -172,16 +172,68 @@ class external extends \external_api
 
     public static function get_logs($attemptid, $slot = 0)
     {
-        return [
-            [
-                'id' => 999,
-                'ai_mark' => 1.0,
-                'ai_comment' => 'Test connection successful',
-                'timecreated' => time(),
-                'questionid' => 1,
-                'slot' => 1
-            ]
-        ];
+        global $DB, $USER;
+        try {
+            $params = self::validate_parameters(self::get_logs_parameters(), [
+                'attemptid' => $attemptid,
+                'slot' => $slot
+            ]);
+
+            $attempt = $DB->get_record('quiz_attempts', ['id' => $params['attemptid']], '*', MUST_EXIST);
+            $quiz = $DB->get_record('quiz', ['id' => $attempt->quiz], '*', MUST_EXIST);
+            $course = $DB->get_record('course', ['id' => $quiz->course], '*', MUST_EXIST);
+            $cm = get_coursemodule_from_instance('quiz', $quiz->id, $course->id, false, MUST_EXIST);
+
+            $context = \context_module::instance($cm->id);
+            self::validate_context($context);
+
+            // Check permissions
+            if ($attempt->userid != $USER->id) {
+                require_capability('mod/quiz:viewreports', $context);
+            }
+
+            $questionid = 0;
+            if ($params['slot'] > 0) {
+                try {
+                    $quba = \question_engine::load_questions_usage_by_activity($attempt->uniqueid);
+                    $qa = $quba->get_question_attempt($params['slot']);
+                    $questionid = $qa->get_question_id();
+                } catch (\Exception $e) {
+                    // Ignore
+                }
+            }
+
+            $conditions = ['attemptid' => $params['attemptid']];
+            if ($questionid > 0) {
+                $conditions['questionid'] = $questionid;
+            }
+
+            $logs = $DB->get_records('local_ai_grader_logs', $conditions, 'timecreated ASC');
+
+            // Map questionid to slot for results
+            $quba_id = $attempt->uniqueid;
+            $q_attempts = $DB->get_records('question_attempts', ['questionusageid' => $quba_id]);
+            $slot_map = [];
+            foreach ($q_attempts as $qa_rec) {
+                $slot_map[$qa_rec->questionid] = $qa_rec->slot;
+            }
+
+            $results = [];
+            foreach ($logs as $log) {
+                $results[] = [
+                    'id' => (int) $log->id,
+                    'ai_mark' => (float) $log->ai_mark,
+                    'ai_comment' => (string) ($log->ai_comment ?? ''),
+                    'timecreated' => (int) $log->timecreated,
+                    'questionid' => (int) $log->questionid,
+                    'slot' => isset($slot_map[$log->questionid]) ? (int) $slot_map[$log->questionid] : 0
+                ];
+            }
+
+            return $results;
+        } catch (\Exception $e) {
+            throw new \moodle_exception($e->getMessage());
+        }
     }
 
     public static function get_logs_returns()

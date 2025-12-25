@@ -5,11 +5,6 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
             init: function () {
                 console.log('AI Grader V3 loaded');
 
-                // Debug indicator
-                if ($('#ai-grader-debug-info').length === 0) {
-                    $('body').prepend('<div id="ai-grader-debug-info" style="position:fixed; top:0; right:10px; background:rgba(0,0,0,0.8); color:#00ff00; padding:10px; z-index:9999; font-size:12px; border: 1px solid #00ff00; border-radius: 0 0 5px 5px;">AI Grader V3: <span id="ai-debug-status">Initializing...</span></div>');
-                }
-
                 var triggerSelector = '#manualgradingform .fitem_fsubmit .felement';
                 // Wait for the form to be available
                 if ($(triggerSelector).length) {
@@ -19,15 +14,13 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
                 // Check for history table (Review page)
                 var historyExists = $('.history table').length || $('.responsehistoryheader').length || $('.que .content').length;
                 if (historyExists) {
-                    console.log('AI Grader: History detected, initiating injection');
                     this.injectHistory();
                 }
             },
 
             updateStatus: function (msg, color) {
-                var el = $('#ai-debug-status');
-                el.text(msg);
-                if (color) el.css('color', color);
+                // Keep for internal logging but could be removed from UI
+                console.log('AI Grader Status: ' + msg);
             },
 
             injectHistory: function () {
@@ -35,99 +28,60 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
                 var urlParams = new URLSearchParams(window.location.search);
                 var attemptId = urlParams.get('attempt');
 
-                if (!attemptId) {
-                    this.updateStatus('No Attempt ID in URL', 'orange');
-                    return;
-                }
+                if (!attemptId) return;
 
-                this.updateStatus('Fetching logs for attempt ' + attemptId + '...');
+                Ajax.call([{
+                    methodname: 'local_ai_grader_get_logs',
+                    args: {
+                        attemptid: parseInt(attemptId)
+                    }
+                }])[0].done(function (logs) {
+                    if (logs.length === 0) return;
 
-                try {
-                    console.log('AI Grader: Calling Ajax.call for local_ai_grader_get_logs', { attemptid: attemptId });
-                    var calls = Ajax.call([{
-                        methodname: 'local_ai_grader_get_logs',
-                        args: {
-                            attemptid: parseInt(attemptId)
-                        }
-                    }]);
-
-                    this.updateStatus('AJAX Request Sent...', 'cyan');
-
-                    calls[0].done(function (logs) {
-                        console.log('AI Grader: AJAX response received', logs);
-                        if (logs.length === 0) {
-                            that.updateStatus('No logs found for attempt ' + attemptId, 'yellow');
-                            return;
-                        }
-
-                        that.updateStatus('Found ' + logs.length + ' logs, matching questions...', '#00ff00');
-
-                        // Find Usage ID from DOM
-                        var usageId = 0;
-                        $('.que').each(function () {
-                            var id = $(this).attr('id');
-                            if (id && id.indexOf('question-') === 0) {
-                                var parts = id.split('-');
-                                if (parts.length >= 2) {
-                                    usageId = parts[1];
-                                    return false; // break
-                                }
+                    // Find Usage ID from DOM
+                    var usageId = 0;
+                    $('.que').each(function () {
+                        var id = $(this).attr('id');
+                        if (id && id.indexOf('question-') === 0) {
+                            var parts = id.split('-');
+                            if (parts.length >= 2) {
+                                usageId = parts[1];
+                                return false; // break
                             }
-                        });
-
-                        if (!usageId) {
-                            console.log('AI Grader: Could not detect usageId, trying fallback');
                         }
-
-                        var injectedCount = 0;
-                        logs.forEach(function (log) {
-                            var targetElementId = 'question-' + usageId + '-' + log.slot;
-                            var targetQue = $('#' + targetElementId);
-
-                            if (targetQue.length === 0) {
-                                // Try targeting by slot directly if usageId failed
-                                targetQue = $('.que').filter(function () {
-                                    var id = $(this).attr('id') || '';
-                                    return id.endsWith('-' + log.slot);
-                                });
-
-                                if (targetQue.length === 0 && $('.que').length === 1) {
-                                    targetQue = $('.que');
-                                }
-                            }
-
-                            if (targetQue.length) {
-                                // Look for the table. It might not be in a div with class 'history' sometimes.
-                                var historyTable = targetQue.find('table').filter(function () {
-                                    var text = $(this).prevAll('h4').text() || $(this).closest('.history').find('h4').text() || $(this).prevAll('h3').text();
-                                    return text.toLowerCase().indexOf('history') !== -1 || $(this).closest('.history').length > 0;
-                                });
-
-                                if (historyTable.length === 0) {
-                                    // Just find the table in the last part of the question content
-                                    historyTable = targetQue.find('.history table, .responsehistoryheader table, .content table').last();
-                                }
-
-                                if (historyTable.length) {
-                                    console.log('AI Grader: Injecting log ' + log.id + ' into question slot ' + log.slot);
-                                    that.appendLogRow(historyTable, log);
-                                    injectedCount++;
-                                }
-                            } else {
-                                console.log('AI Grader: Target question not found for log ' + log.id + ' (Slot: ' + log.slot + ')');
-                            }
-                        });
-
-                        that.updateStatus('Injected ' + injectedCount + ' / ' + logs.length + ' logs', injectedCount > 0 ? '#00ff00' : 'red');
-                    }).fail(function (ex) {
-                        console.error('AI Grader: AJAX Promise failed', ex);
-                        var errorMsg = ex.message || ex.error || (typeof ex === 'string' ? ex : 'AJAX Rejected');
-                        that.updateStatus('Error: ' + errorMsg, 'red');
                     });
-                } catch (e) {
-                    console.error('AI Grader: Crash during AJAX call', e);
-                    this.updateStatus('Crash: ' + e.message, 'red');
-                }
+
+                    logs.forEach(function (log) {
+                        var targetElementId = 'question-' + usageId + '-' + log.slot;
+                        var targetQue = $('#' + targetElementId);
+
+                        if (targetQue.length === 0) {
+                            targetQue = $('.que').filter(function () {
+                                var id = $(this).attr('id') || '';
+                                return id.endsWith('-' + log.slot);
+                            });
+
+                            if (targetQue.length === 0 && $('.que').length === 1) {
+                                targetQue = $('.que');
+                            }
+                        }
+
+                        if (targetQue.length) {
+                            var historyTable = targetQue.find('table').filter(function () {
+                                var text = $(this).prevAll('h4').text() || $(this).closest('.history').find('h4').text() || $(this).prevAll('h3').text();
+                                return text.toLowerCase().indexOf('history') !== -1 || $(this).closest('.history').length > 0;
+                            });
+
+                            if (historyTable.length === 0) {
+                                historyTable = targetQue.find('.history table, .responsehistoryheader table, .content table').last();
+                            }
+
+                            if (historyTable.length) {
+                                that.appendLogRow(historyTable, log);
+                            }
+                        }
+                    });
+                });
             },
 
             appendLogRow: function (table, log) {
@@ -137,13 +91,13 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
                 var date = new Date(log.timecreated * 1000);
                 var dateStr = date.toLocaleString();
 
-                var stepNum = "AI Advice";
+                var stepNum = "AI";
 
                 // Find column count to match table header
                 var colCount = table.find('thead th, thead td').length;
                 if (colCount === 0) colCount = table.find('tr').first().find('th, td').length;
 
-                var rowHtml = '<tr id="ai-log-' + log.id + '" style="background-color: #e7f3ff; border-left: 5px solid #007bff;">';
+                var rowHtml = '<tr id="ai-log-' + log.id + '" style="background-color: #f0f7ff; border-left: 5px solid #007bff; font-size: 0.9em;">';
                 rowHtml += '<td>' + stepNum + '</td>';
                 rowHtml += '<td>' + dateStr + '</td>';
 
@@ -166,12 +120,43 @@ define('local_ai_grader/grader', ['jquery', 'core/ajax', 'core/notification'],
 
                 rowHtml += '</tr>';
 
-                // Append to tbody or last tr
+                // Find insertion point: Find the first row with a timestamp later than our log
+                var inserted = false;
                 var tbody = table.find('tbody');
-                if (tbody.length) {
-                    tbody.append(rowHtml);
-                } else {
-                    table.append(rowHtml);
+                if (tbody.length === 0) tbody = table;
+
+                tbody.find('tr').each(function () {
+                    var row = $(this);
+                    var cellTimeText = row.find('td:eq(1)').text();
+                    if (cellTimeText) {
+                        // Very rough time comparison or look for "Manually graded" and mark matching
+                        var rowActionText = row.find('td:eq(2)').text();
+                        if (rowActionText.indexOf('Manually graded') !== -1) {
+                            // If this manual grade matches our AI log's mark or is very close in time
+                            // Let's check marks
+                            var markMatch = rowActionText.match(/graded ([\d\.]+)/);
+                            if (markMatch && parseFloat(markMatch[1]) == log.ai_mark) {
+                                row.before(rowHtml);
+                                inserted = true;
+                                return false; // break
+                            }
+
+                            // Or if we don't have a mark match but it's the next manual grade, 
+                            // we can assume it was the suggestion for it
+                            // For now, let's just insert before the NEXT manual grade row regardless of mark if it's the first one we see
+                            row.before(rowHtml);
+                            inserted = true;
+                            return false;
+                        }
+                    }
+                });
+
+                if (!inserted) {
+                    if (tbody.has('tbody').length) {
+                        tbody.append(rowHtml);
+                    } else {
+                        table.find('tbody').length ? table.find('tbody').append(rowHtml) : table.append(rowHtml);
+                    }
                 }
             },
 
