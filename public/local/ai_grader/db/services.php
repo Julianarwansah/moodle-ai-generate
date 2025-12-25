@@ -10,4 +10,12 @@ $functions = [
         'type' => 'write',
         'ajax' => true,
     ],
+    'local_ai_grader_get_logs' => [
+        'classname' => 'local_ai_grader\external',
+        'methodname' => 'get_logs',
+        'classpath' => 'local/ai_grader/classes/external.php',
+        'description' => 'Retrieves AI grading logs for an attempt',
+        'type' => 'read',
+        'ajax' => true,
+    ],
 ];

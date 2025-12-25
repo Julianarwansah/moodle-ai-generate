@@ -161,6 +161,80 @@ class external extends \external_api
         ];
     }
 
+    public static function get_logs_parameters()
+    {
+        return new \external_function_parameters([
+            'attemptid' => new \external_value(PARAM_INT, 'The quiz attempt ID'),
+            'slot' => new \external_value(PARAM_INT, 'The question slot number', VALUE_DEFAULT, 0)
+        ]);
+    }
+
+    public static function get_logs($attemptid, $slot = 0)
+    {
+        global $DB, $USER;
+        $params = self::validate_parameters(self::get_logs_parameters(), [
+            'attemptid' => $attemptid,
+            'slot' => $slot
+        ]);
+
+        $attempt = $DB->get_record('quiz_attempts', ['id' => $params['attemptid']], '*', MUST_EXIST);
+        $quiz = $DB->get_record('quiz', ['id' => $attempt->quiz], '*', MUST_EXIST);
+        $course = $DB->get_record('course', ['id' => $quiz->course], '*', MUST_EXIST);
+        $cm = get_coursemodule_from_instance('quiz', $quiz->id, $course->id, false, MUST_EXIST);
+
+        $context = \context_module::instance($cm->id);
+        self::validate_context($context);
+
+        // Check if the user is the owner of the attempt or has grading permissions
+        if ($attempt->userid != $USER->id) {
+            require_capability('mod/quiz:viewreports', $context);
+        }
+
+        $questionid = 0;
+        if ($slot > 0) {
+            try {
+                $quba = \question_engine::load_questions_usage_by_activity($attempt->uniqueid);
+                $qa = $quba->get_question_attempt($params['slot']);
+                $questionid = $qa->get_question_id();
+            } catch (\Exception $e) {
+                // Ignore
+            }
+        }
+
+        $conditions = ['attemptid' => $params['attemptid']];
+        if ($questionid > 0) {
+            $conditions['questionid'] = $questionid;
+        }
+
+        $logs = $DB->get_records('local_ai_grader_logs', $conditions, 'timecreated ASC');
+
+        $results = [];
+        foreach ($logs as $log) {
+            $results[] = [
+                'id' => $log->id,
+                'ai_mark' => (float) $log->ai_mark,
+                'ai_comment' => $log->ai_comment,
+                'timecreated' => (int) $log->timecreated,
+                'questionid' => (int) $log->questionid
+            ];
+        }
+
+        return $results;
+    }
+
+    public static function get_logs_returns()
+    {
+        return new \external_multiple_structure(
+            new \external_single_structure([
+                'id' => new \external_value(PARAM_INT, 'Log ID'),
+                'ai_mark' => new \external_value(PARAM_FLOAT, 'AI Mark'),
+                'ai_comment' => new \external_value(PARAM_RAW, 'AI Comment'),
+                'timecreated' => new \external_value(PARAM_INT, 'Time created'),
+                'questionid' => new \external_value(PARAM_INT, 'Question ID')
+            ])
+        );
+    }
+
     public static function grade_essay_returns()
     {
         return new \external_single_structure([
